@@ -1,0 +1,8 @@
+/__pycache__
+*.pt
+*.ptl
+correlation_matrix_data.png
+correlation_matrix_trc_full_names.png
+cross_correlation_heatmap_lag0_full_names_v5.png
+cross_correlation_lag0.csv
+*.txt

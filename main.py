@@ -18,7 +18,15 @@ import glob
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.mobile_optimizer import optimize_for_mobile
+
+# FROM PYTORCH LITE: from torch.utils.mobile_optimizer import optimize_for_mobile
+# +++ START EXECUTORCH IMPORTS +++
+from torch.export import export, ExportedProgram
+from executorch.exir import EdgeProgramManager, to_edge
+from executorch.sdk.etdump import GeneratableEtDump, ETDumpGen # For ETDump, if needed
+from executorch.sdk.etrecord import ETRecord # For ETRecord, if needed
+# +++ END EXECUTORCH IMPORTS +++
+
 from data_loading import read_trc_file, process_trc_files, process_data_files, read_data_file, prepare_data_for_modeling  # Import the new function
 from eda import calculate_correlation_matrix, calculate_cross_correlation
 from model import LSTM_Network, LSTM_Network_with_Attention
@@ -35,9 +43,9 @@ import os
 # --- File Paths ---
 
 TRC_FILE_PATH = r'G:\Shared drives\Digital Twin Model\Pilot Test dataset\ToDavid\MarkerData\*.trc'
-DATA_FILE_PATH = r'G:\Shared drives\Digital Twin Model\Pilot Test dataset\ToDavid\IK_Results\*.mot'  # Kinematics
+#DATA_FILE_PATH = r'G:\Shared drives\Digital Twin Model\Pilot Test dataset\ToDavid\IK_Results\*.mot'  # Kinematics
 #DATA_FILE_PATH = r'G:\Shared drives\Digital Twin Model\Pilot Test dataset\ToDavid\ID_Results\*.sto'  # Dynamics
-#DATA_FILE_PATH = r'G:\Shared drives\Digital Twin Model\Pilot Test dataset\ToDavid\ForcesData\*.mot'  # Ground Forces
+DATA_FILE_PATH = r'G:\Shared drives\Digital Twin Model\Pilot Test dataset\ToDavid\ForcesData\*.mot'  # Ground Forces
 
 # --- Main Execution ---
 if __name__ == '__main__':
@@ -69,7 +77,7 @@ if __name__ == '__main__':
     
     # %%
 
-    # 2. Exploratory Data Analysis (EDA)
+    # # 2. Exploratory Data Analysis (EDA)
     # if trc_data_for_eda is not None and data_for_eda is not None:
     #     print("Performing EDA...")
 
@@ -88,8 +96,8 @@ if __name__ == '__main__':
     # 3. Prepare Data for Modeling -  Select data columns (adjust as needed)
     data_columns_to_use = None  # If you want to use all data columns, set data_columns_to_use = None
     #data_columns_to_use = ['pelvis_tx','pelvis_ty','pelvis_tz']  # Example
-    #data_columns_to_use = [1,7]  # Example
-    #data_columns_to_use =list(range(5))
+    data_columns_to_use = [1]  # Example
+    data_columns_to_use =list(range(5))
     
     # Prepare data for modeling
     (train_data, val_data, test_data, max_length, input_size, output_size) = prepare_data_for_modeling(
@@ -106,12 +114,12 @@ if __name__ == '__main__':
     
     # 4. Model Training and Evaluation
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    #model = LSTM_Network_with_Attention(input_size, hidden_size=512, output_size=output_size,attention_type='dot').to(device)
-    model = LSTM_Network(input_size, hidden_size=512, output_size=output_size).to(device)
+    model = LSTM_Network_with_Attention(input_size, hidden_size=512, output_size=output_size,attention_type='dot').to(device)
+    #model = LSTM_Network(input_size, hidden_size=512, output_size=output_size).to(device)
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     
-    num_epochs = 100
+    num_epochs = 200
     train_losses, val_losses, train_maes, val_maes, train_r2s, val_r2s = train_and_evaluate(
         model, train_loader, val_loader, criterion, optimizer, num_epochs, device)
     plot_results(train_losses, val_losses, train_maes, val_maes, train_r2s, val_r2s)
@@ -120,34 +128,56 @@ if __name__ == '__main__':
 
     # --- Saving the Standard PyTorch Model and PyTorch Lite Model ---
     model_save_path = "best_trained_model.pt"  # Unified name for the standard model
-    lite_model_save_path = "best_trained_model_lite.ptl" # Unified name for the lite model
+    # CHANGED: .pte extension for ExecuTorch
+    executorch_model_save_path = "best_trained_model.pte" 
     
     try:
-        # Ensure model is in evaluation mode for consistent saving/scripting
-        model.eval()
+        model.eval() # Ensure model is in evaluation mode
 
-        # Save the Standard PyTorch Model
-        torch.save(model, model_save_path)
-        print(f"Standard model saved successfully to {model_save_path}")
+        # Save the Standard PyTorch Model (optional, but good for reference)
+        torch.save(model.state_dict(), model_save_path) # Save state_dict for standard model
+        print(f"Standard model state_dict saved successfully to {model_save_path}")
 
-        # Convert and Save the PyTorch Lite Model
-        print(f"\n--- Converting model to PyTorch Lite format ---")
+        # --- Convert and Save the ExecuTorch Model ---
+        print(f"\n--- Converting model to ExecuTorch .pte format ---")
         
-        # Script the model. It can be on its current device (CPU or GPU).
-        scripted_module = torch.jit.script(model)
-        print("Model scripted successfully.")
+        # 1. Get an example input.
+        #    ExecuTorch's export process needs an example input to trace the model.
+        #    You can get this from your DataLoader or create a dummy tensor
+        #    with the correct shape and type.
+        #    Let's take one batch from the test_loader.
+        example_inputs, _ = next(iter(test_loader))
+        example_input_for_export = example_inputs[0:1].to(device) # Use a single sample from the batch
 
-        # Optimize for mobile. This step typically expects the scripted module to be on CPU.
-        scripted_module_cpu = scripted_module.to("cpu")
-        optimized_scripted_module = optimize_for_mobile(scripted_module_cpu)
-        print("Model optimized for mobile.")
+        # Make sure the model is on CPU for export if it was on GPU
+        # Or ensure your capture_config handles device correctly
+        model_cpu = model.to("cpu")
+        example_input_for_export = example_input_for_export.to("cpu")
+        
+        # 2. Export to ATen/Edge dialect using torch.export
+        #    You might need to adapt this based on your model's specifics (e.g., dynamic shapes)
+        print("Exporting the model using torch.export...")
+        aten_exported_program: ExportedProgram = export(model_cpu, (example_input_for_export,))
+        print("Model exported to ATen dialect.")
 
-        # Save the model for the lite interpreter
-        optimized_scripted_module._save_for_lite_interpreter(lite_model_save_path)
-        print(f"PyTorch Lite model saved successfully to {lite_model_save_path}")
+        # 3. Convert to Edge IR
+        print("Converting to Edge IR...")
+        edge_program_manager: EdgeProgramManager = to_edge(aten_exported_program)
+        print("Model converted to Edge IR.")
+        
+        # 4. Convert to ExecuTorch IR and save as .pte
+        #    This step performs the final conversion to the format that can run on device.
+        print("Converting to ExecuTorch IR and serializing to .pte file...")
+        executorch_program = edge_program_manager.to_executorch()
+        
+        with open(executorch_model_save_path, "wb") as f:
+            f.write(executorch_program.buffer)
+        print(f"ExecuTorch model saved successfully to {executorch_model_save_path}")
 
     except Exception as e:
-        print(f"Error during model saving or Lite conversion: {e}")
+        print(f"Error during model saving or ExecuTorch conversion: {e}")
+        import traceback
+        traceback.print_exc()
      
     # 5. Model Validation and Analysis
     predictions, actuals = validate_model(model, test_loader, device)
