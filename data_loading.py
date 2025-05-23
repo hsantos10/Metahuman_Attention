@@ -255,99 +255,61 @@ def pad_or_truncate(sequence, max_length):
     if seq_length < max_length:
         pad_length = max_length - seq_length
         pad_array = np.zeros((pad_length, sequence.shape[1]))
-        return np.concatenate([sequence, pad_array], axis=0)
+        padded_sequence = np.concatenate([sequence, pad_array], axis=0)
+        return padded_sequence, seq_length # Return original length
     elif seq_length > max_length:
-        return sequence[:max_length]
+        truncated_sequence = sequence[:max_length]
+        return truncated_sequence, max_length # Original length is max_length (or seq_length before truncation)
     else:
-        return sequence
+        return sequence, seq_length
+    
 import matplotlib.pyplot as plt  # Import matplotlib
 
 
+# You might need a similar update for `prepare_data_for_modeling` if you use it directly.
+# For `load_and_process_split` (the one without metadata):
 def load_and_process_split(trc_dfs, data_dfs, max_length, data_columns_to_use, split_name=""):
-    """
-    Loads and processes TRC and other data, performing normalization and padding. Includes debugging.
-    """
     trc_sequences = []
     data_sequences = []
+    input_masks = [] # Add masks list
+
     for i, (trc_df, data_df) in enumerate(zip(trc_dfs, data_dfs)):
         trc_data = trc_df.copy()
         data = data_df.copy()
         
-        '''
-        # --- DEBUG: TRC Data Before Normalization ---
-        print(f"\n--- {split_name} - TRC Data Before Normalization (File {i + 1}) ---")
-        print(f"TRC shape: {trc_data.shape}")
-        print(f"TRC mean (first 5 cols):\n{trc_data.mean().head(5)}")
-        print(f"TRC std (first 5 cols):\n{trc_data.std().head(5)}")
-
-        # Plot TRC data distribution before normalization
-        plt.figure(figsize=(12, 6))
-        for j in range(min(3, trc_data.shape[1])):  # Plot first 3 columns max
-            plt.subplot(1, 3, j + 1)
-            trc_data.iloc[:, j].hist(bins=50, alpha=0.7, label='Before Norm')
-            plt.title(f'TRC Col {j + 1}')
-            plt.xlabel('Value')
-            plt.ylabel('Frequency')
-            plt.legend()
-        plt.tight_layout()
-        plt.show()
-        '''
-
-        # Normalize TRC data
         trc_data_normalized = normalize_data(trc_data.copy(), type='standard')
 
-        '''
-        # --- DEBUG: TRC Data After Normalization ---
-        print(f"\n--- {split_name} - TRC Data After Normalization (File {i + 1}) ---")
-        print(f"TRC shape: {trc_data_normalized.shape}")
-        print(f"TRC mean (first 5 cols):\n{trc_data_normalized.mean().head(5)}")
-        print(f"TRC std (first 5 cols):\n{trc_data_normalized.std().head(5)}")
-
-        # Plot TRC data distribution after normalization
-        plt.figure(figsize=(12, 6))
-        for j in range(min(3, trc_data_normalized.shape[1])):
-            plt.subplot(1, 3, j + 1)
-            trc_data_normalized.iloc[:, j].hist(bins=50, alpha=0.7, label='After Norm')
-            plt.title(f'TRC Col {j + 1}')
-            plt.xlabel('Value')
-            plt.ylabel('Frequency')
-            plt.legend()
-        plt.tight_layout()
-        plt.show()
-        '''
-
-        # Select columns from data_df
         if data_columns_to_use:
-            data = data.iloc[:, data_columns_to_use]
+            # Ensure columns exist, robustly select
+            available_cols = [col_idx for col_idx in data_columns_to_use if col_idx < data.shape[1]]
+            if len(available_cols) != len(data_columns_to_use):
+                print(f"Warning in {split_name}: Not all data_columns_to_use indices are valid for a data_df of shape {data.shape}. Using: {available_cols}")
+            if not available_cols:
+                 print(f"Error in {split_name}: No valid data_columns_to_use. Skipping file {i+1}.")
+                 continue
+            data = data.iloc[:, available_cols]
 
-        # Ensure data is a NumPy array BEFORE padding/truncating
-        data_array = data.values  # Get NumPy array from DataFrame
 
-        '''
-        # --- DEBUG: Other Data ---
-        print(f"\n--- {split_name} - Other Data (File {i + 1}) ---")
-        print(f"Other shape: {data.shape}")
-        print(f"Other mean (first 5 cols):\n{data.mean().head(5)}")
-        print(f"Other std (first 5 cols):\n{data.std().head(5)}")
+        data_array = data.values
 
-        # Plot other data distribution
-        plt.figure(figsize=(12, 6))
-        for j in range(min(3, data.shape[1])):
-            plt.subplot(1, 3, j + 1)
-            data.iloc[:, j].hist(bins=50, alpha=0.7)
-            plt.title(f'Other Col {j + 1}')
-            plt.xlabel('Value')
-            plt.ylabel('Frequency')
-        plt.tight_layout()
-        plt.show()
-        '''
+        # Pad and get original lengths
+        trc_sequence_padded, trc_original_len = pad_or_truncate(trc_data_normalized.values, max_length)
+        data_sequence_padded, data_original_len = pad_or_truncate(data_array, max_length) # Assuming targets also padded
 
-        trc_sequence = pad_or_truncate(trc_data_normalized.values, max_length)
-        data_sequence = pad_or_truncate(data_array, max_length)
+        # Create input mask
+        input_mask_np = np.zeros(max_length, dtype=np.float32)
+        input_mask_np[:trc_original_len] = 1.0
+        
+        trc_sequences.append(torch.tensor(trc_sequence_padded, dtype=torch.float32))
+        data_sequences.append(torch.tensor(data_sequence_padded, dtype=torch.float32))
+        input_masks.append(torch.tensor(input_mask_np, dtype=torch.float32))
 
-        trc_sequences.append(torch.tensor(trc_sequence, dtype=torch.float32))
-        data_sequences.append(torch.tensor(data_sequence, dtype=torch.float32))
-    return trc_sequences, data_sequences
+    if not trc_sequences: # If list is empty (e.g. due to errors or no data)
+        print(f"Warning: No sequences processed for split: {split_name}")
+        return [], [], []
+
+    return trc_sequences, data_sequences, input_masks
+
 
 def prepare_data_for_modeling(processed_trc_data, processed_data, data_columns_to_use, test_size=0.1, val_size=0.1, random_state=42):
     """
@@ -365,27 +327,54 @@ def prepare_data_for_modeling(processed_trc_data, processed_data, data_columns_t
     Returns:
         tuple: A tuple containing (train_data, val_data, test_data, max_length, input_size, output_size)
                where each data split is a tuple of (trc_sequences, data_sequences).
+    Prepares processed TRC and data DataFrames for modeling by splitting, padding, normalizing, and creating masks.
+    Returns tuples of (sequences, targets, masks).
     """
-
-    # Split the data
     trc_train_val, trc_test, data_train_val, data_test = train_test_split(
         processed_trc_data, processed_data, test_size=test_size, random_state=random_state)
+    
+    # Adjust val_size to be a proportion of the new training set (trc_train_val)
+    actual_val_size = val_size / (1 - test_size) if (1-test_size) > 0 else 0
     trc_train, trc_val, data_train, data_val = train_test_split(
-        trc_train_val, data_train_val, test_size=val_size / (1 - test_size), random_state=random_state)
+        trc_train_val, data_train_val, test_size=actual_val_size, random_state=random_state)
 
-    # Determine max_length (from training TRC data)
-    max_length = 651
-    for trc_df in trc_train:
-        max_length = max(max_length, trc_df.shape[0])
+    max_length = 0
+    # Determine max_length from original lengths of training TRC data before padding
+    for trc_df, data_df_from_list in zip(trc_train, data_train): # Iterate through original dataframes
+        # Align lengths before determining max_length for padding
+        # data_df needs to be handled carefully if it's a list of DFs or a single DF
+        # Assuming processed_data is a list of DFs corresponding to processed_trc_data
+        min_len_current_pair = min(trc_df.shape[0], data_df_from_list.shape[0])
+        max_length = max(max_length, min_len_current_pair)
         
+    if max_length == 0: # Fallback if no training data or all files were empty
+        max_length = 651 
+    print(f"Determined max_length for padding (from training data, after alignment): {max_length}")
 
-    train_data = load_and_process_split(trc_train, data_train, max_length, data_columns_to_use, split_name="Train")
-    val_data = load_and_process_split(trc_val, data_val, max_length, data_columns_to_use, split_name="Validation")
-    test_data = load_and_process_split(trc_test, data_test, max_length, data_columns_to_use, split_name="Test")
+    # load_and_process_split now returns three lists
+    train_trc_seqs, train_data_seqs, train_input_masks = load_and_process_split(
+        trc_train, data_train, max_length, data_columns_to_use, split_name="Train")
+    val_trc_seqs, val_data_seqs, val_input_masks = load_and_process_split(
+        trc_val, data_val, max_length, data_columns_to_use, split_name="Validation")
+    test_trc_seqs, test_data_seqs, test_input_masks = load_and_process_split(
+        trc_test, data_test, max_length, data_columns_to_use, split_name="Test")
 
-    input_size = train_data[0][0].shape[1] if train_data[0] else 0
-    output_size = train_data[1][0].shape[1] if train_data[1] else 0
+    if not train_trc_seqs: # Check if training data processing failed
+        print("Error: Training data could not be processed into sequences. Exiting.")
+        # Depending on your setup, you might raise an error or handle this to prevent crashes
+        # For now, let's return empty structures that might cause downstream errors,
+        # or you can explicitly exit/raise.
+        return ([], [], []), ([], [], []), ([], [], []), 0, 0, 0
 
+
+    input_size = train_trc_seqs[0].shape[1] if train_trc_seqs and len(train_trc_seqs[0].shape) > 1 else 0
+    output_size = train_data_seqs[0].shape[1] if train_data_seqs and len(train_data_seqs[0].shape) > 1 else 0
+
+
+    train_data = (train_trc_seqs, train_data_seqs, train_input_masks)
+    val_data = (val_trc_seqs, val_data_seqs, val_input_masks)
+    test_data = (test_trc_seqs, test_data_seqs, test_input_masks)
+    
     return train_data, val_data, test_data, max_length, input_size, output_size
 
 # MODIFIED/NEW FUNCTIONS TO INCORPORATE META DATA START HERE
@@ -455,7 +444,9 @@ def load_and_process_split_with_metadata(
     Loads TRC and other data, adds metadata, performs normalization and padding.
     """
     trc_sequences = []
-    data_sequences = [] # This will be your target sequences (e.g., ground forces)
+    data_sequences = [] # This will be target sequences (e.g., ground forces)
+    input_masks = [] # To store masks for input (TRC) sequences
+    # target_masks = [] # If targets also need masking (e.g. for loss)
 
     # Determine suffixes if not provided
     if not trc_file_suffix and file_list_trc:
@@ -533,22 +524,33 @@ def load_and_process_split_with_metadata(
         trc_sequence_aligned = trc_data_normalized.iloc[:min_len].values
         data_sequence_aligned = data_array[:min_len]
         
-        # Then pad to max_length
-        trc_sequence_padded = pad_or_truncate(trc_sequence_aligned, max_length)
-        data_sequence_padded = pad_or_truncate(data_sequence_aligned, max_length)
+        
+        # Pad and get original length
+        trc_sequence_padded, trc_original_len = pad_or_truncate(trc_sequence_aligned, max_length)
+        data_sequence_padded, data_original_len = pad_or_truncate(data_sequence_aligned, max_length) # Assuming targets also padded similarly
 
+        # Create input mask
+        input_mask = np.zeros(max_length, dtype=np.float32)
+        input_mask[:trc_original_len] = 1.0
+        
+        # # Create target mask (if needed for loss calculation on padded targets)
+        # target_mask = np.zeros(max_length, dtype=np.float32)
+        # target_mask[:data_original_len] = 1.0
+        
 
         trc_sequences.append(torch.tensor(trc_sequence_padded, dtype=torch.float32))
         data_sequences.append(torch.tensor(data_sequence_padded, dtype=torch.float32))
+        input_masks.append(torch.tensor(input_mask, dtype=torch.float32))
+        # target_masks.append(torch.tensor(target_mask, dtype=torch.float32))
 
     if not trc_sequences or not data_sequences: # If lists are empty
         print(f"Warning: No data successfully processed for split: {split_name}")
         # Return empty tensors of appropriate shape if possible, or handle upstream
         # This depends on how your main.py expects empty data
         # For now, let's return empty lists and let the caller handle it.
-        return [], []
+        return [], [], [] # Or [], [], [], [] if target_masks also returned
 
-    return trc_sequences, data_sequences
+    return trc_sequences, data_sequences, input_masks
 
 
 def prepare_data_for_modeling_with_metadata(
@@ -605,69 +607,47 @@ def prepare_data_for_modeling_with_metadata(
     # A common approach: find max length across ALL files once, or use a fixed one.
     # Your original code finds it from trc_train DataFrames AFTER processing.
     # Let's keep it dynamic based on training files for now, but load them first.
-    max_len_trc = 0
-    for fp in trc_train:
-        df = read_trc_file(fp) # Just to get length
-        if df is not None:
-            max_len_trc = max(max_len_trc, len(df))
-
-    max_len_data = 0
-    for fp in data_train:
-        df = read_data_file(fp) # Just to get length
-        if df is not None:
-             max_len_data = max(max_len_data, len(df))
-    
-    # Max length should be consistent for input (X) and output (Y) sequences after alignment
-    # So, we use the min of their original lengths then pad to a global max.
-    # The global max_length for padding should be determined from all files or a predefined value.
-    # Let's set a global max_length from all files, or use your fixed 651 if preferred.
-    # For dynamic max_length:
     global_max_len = 0
-    temp_all_trc_files = trc_file_paths # or just trc_train for training-based max_len
-    temp_all_data_files = data_file_paths # or just data_train
-
-    for fp_trc, fp_data in zip(temp_all_trc_files, temp_all_data_files):
+    for fp_trc, fp_data in zip(trc_file_paths, data_file_paths): # Check all files for robust max_len
         df_trc = read_trc_file(fp_trc)
         df_data = read_data_file(fp_data)
         if df_trc is not None and df_data is not None:
-            global_max_len = max(global_max_len, min(len(df_trc), len(df_data)))
+            # Align first, then check length for padding
+            current_min_len = min(len(df_trc), len(df_data))
+            global_max_len = max(global_max_len, current_min_len)
     
-    if global_max_len == 0: # If no files were read
-        global_max_len = 651 # Default to your previous value
-    print(f"Determined global_max_len for padding (based on min_len of pairs): {global_max_len}")
+    if global_max_len == 0:
+        global_max_len = 651 # Fallback
+    print(f"Determined global_max_len for padding (based on min_len of pairs before padding): {global_max_len}")
 
-
-    train_trc_seqs, train_data_seqs = load_and_process_split_with_metadata(
+    # The load_and_process_split_with_metadata now returns three lists: trc_seqs, data_seqs, input_masks
+    train_trc_seqs, train_data_seqs, train_input_masks = load_and_process_split_with_metadata(
         trc_train, data_train, metadata_df, global_max_len, data_columns_to_use, "Train",
         trc_file_prefix, trc_file_suffix, data_file_prefix, data_file_suffix,
         subject_id_col_in_metadata, weight_col_in_metadata, height_col_in_metadata
     )
-    val_trc_seqs, val_data_seqs = load_and_process_split_with_metadata(
+    val_trc_seqs, val_data_seqs, val_input_masks = load_and_process_split_with_metadata(
         trc_val, data_val, metadata_df, global_max_len, data_columns_to_use, "Validation",
         trc_file_prefix, trc_file_suffix, data_file_prefix, data_file_suffix,
         subject_id_col_in_metadata, weight_col_in_metadata, height_col_in_metadata
     )
-    test_trc_seqs, test_data_seqs = load_and_process_split_with_metadata(
+    test_trc_seqs, test_data_seqs, test_input_masks = load_and_process_split_with_metadata(
         trc_test, data_test, metadata_df, global_max_len, data_columns_to_use, "Test",
         trc_file_prefix, trc_file_suffix, data_file_prefix, data_file_suffix,
         subject_id_col_in_metadata, weight_col_in_metadata, height_col_in_metadata
     )
 
-    # Handle cases where splits might be empty
     if not train_trc_seqs:
         print("Error: Training data could not be processed. Exiting.")
-        # You might want to raise an exception or exit more gracefully
-        exit()
+        exit() # Or raise an error
 
-
-    # Input size is number of features in one TRC sequence item (after adding weight/height)
-    # train_trc_seqs is a list of tensors. Get shape from the first one.
     input_size = train_trc_seqs[0].shape[1] if train_trc_seqs else 0
-    output_size = train_data_seqs[0].shape[1] if train_data_seqs else 0 # Num target features
+    output_size = train_data_seqs[0].shape[1] if train_data_seqs else 0
 
-    # Package into tuples as before
-    train_data_tuple = (train_trc_seqs, train_data_seqs)
-    val_data_tuple = (val_trc_seqs, val_data_seqs)
-    test_data_tuple = (test_trc_seqs, test_data_seqs)
+    # Package into tuples: (trc_sequences, data_sequences, input_masks)
+    # If you created target_masks, include them as the fourth element.
+    train_data_tuple = (train_trc_seqs, train_data_seqs, train_input_masks)
+    val_data_tuple = (val_trc_seqs, val_data_seqs, val_input_masks)
+    test_data_tuple = (test_trc_seqs, test_data_seqs, test_input_masks)
 
     return train_data_tuple, val_data_tuple, test_data_tuple, global_max_len, input_size, output_size

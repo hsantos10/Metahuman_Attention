@@ -13,105 +13,170 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import r2_score
 
 def train_and_evaluate(model, train_loader, val_loader, criterion, optimizer, num_epochs, device):
+    """
+    Trains and evaluates the model, incorporating masking for padded sequences.
+
+    Args:
+        model: The PyTorch model to train.
+        train_loader: DataLoader for the training set. Yields inputs, targets, and input_masks.
+        val_loader: DataLoader for the validation set. Yields inputs, targets, and input_masks.
+        criterion: The loss function (e.g., nn.MSELoss(reduction='none')).
+        optimizer: The optimization algorithm.
+        num_epochs (int): The number of epochs to train for.
+        device: The device to train on ('cuda' or 'cpu').
+
+    Returns:
+        tuple: Containing lists of training/validation losses, MAEs, and R2 scores.
+    """
     model.to(device)
     train_losses, val_losses = [], []
     train_maes, val_maes = [], []
     train_r2s, val_r2s = [], []
 
     for epoch in range(num_epochs):
-        # Training phase
+        # --- Training phase ---
         model.train()
-        batch_train_loss = 0
-        batch_train_mae = 0
-        
+        batch_train_loss_sum = 0
+        batch_train_mae_sum = 0
+        total_train_elements = 0 # For averaging masked loss/mae
+
+        # Initialize lists for storing epoch-level data for R2 calculation
         epoch_train_actuals_list = []
         epoch_train_predictions_list = []
+        epoch_train_masks_list = [] # To store masks corresponding to targets
 
-        for inputs, targets in train_loader: # targets shape: (batch_size, seq_len, num_features)
-            inputs, targets = inputs.to(device), targets.to(device)
+        # DataLoader yields inputs, targets, and input_masks_from_loader
+        for inputs, targets, input_masks_from_loader in train_loader:
+            inputs = inputs.to(device)
+            targets = targets.to(device)
+            input_masks_dev = input_masks_from_loader.to(device) # Mask for model input
             
             optimizer.zero_grad()
-            outputs = model(inputs)  # outputs shape: (batch_size, seq_len, num_features)
             
-            # --- MODIFIED LOSS CALCULATION ---
-            loss = criterion(outputs, targets) 
+            # Pass input_masks_dev to the model's forward method
+            outputs = model(inputs, input_mask=input_masks_dev) # (batch, seq_len, num_features)
+            
+            # Loss Calculation (Masked)
+            # criterion should have reduction='none', raw_loss is (batch, seq_len, num_features)
+            raw_loss = criterion(outputs, targets) 
+            
+            # Create a target_mask from input_masks_dev (or a separate target_mask if available)
+            # This mask is applied to the loss and metrics for the target sequences.
+            # Assuming target padding mirrors input padding for now.
+            target_mask_for_loss = input_masks_dev.unsqueeze(-1).expand_as(targets) # (B, S, 1) -> (B, S, F)
+
+            masked_loss_elements = raw_loss * target_mask_for_loss
+            # Average loss only over non-padded elements
+            loss = masked_loss_elements.sum() / target_mask_for_loss.sum().clamp(min=1e-9) # Avoid division by zero
+
             loss.backward()
             optimizer.step()
             
-            batch_train_loss += loss.item()
+            batch_train_loss_sum += masked_loss_elements.sum().item() # Sum of loss over non-padded
+            
+            # MAE Calculation (Masked)
+            abs_error = torch.abs(outputs - targets)
+            masked_abs_error_elements = abs_error * target_mask_for_loss
+            batch_train_mae_sum += masked_abs_error_elements.sum().item()
+            
+            total_train_elements += target_mask_for_loss.sum().item()
 
-            # --- MODIFIED MAE CALCULATION ---
-            mae = torch.mean(torch.abs(outputs - targets)).detach().cpu().numpy()
-            batch_train_mae += mae
-
-            # Store full sequences for epoch-level R2 calculation
+            # Store full sequences and masks for epoch-level R2 calculation
             epoch_train_actuals_list.append(targets.cpu().numpy())
             epoch_train_predictions_list.append(outputs.detach().cpu().numpy())
+            epoch_train_masks_list.append(target_mask_for_loss.cpu().numpy()) # Store the mask used for loss/metrics
             
-        avg_train_loss = batch_train_loss / len(train_loader)
-        avg_train_mae = batch_train_mae / len(train_loader)
+        avg_train_loss = batch_train_loss_sum / total_train_elements if total_train_elements > 0 else 0
+        avg_train_mae = batch_train_mae_sum / total_train_elements if total_train_elements > 0 else 0
         train_losses.append(avg_train_loss)
         train_maes.append(avg_train_mae)
 
         # Concatenate all batch results for the epoch
         train_actuals_epoch = np.concatenate(epoch_train_actuals_list, axis=0)
         train_predictions_epoch = np.concatenate(epoch_train_predictions_list, axis=0)
+        train_masks_epoch = np.concatenate(epoch_train_masks_list, axis=0) # Shape: (N_samples, Seq_len, Num_features)
 
-        # --- MODIFIED R2 CALCULATION (flattening time steps) ---
+        # R2 Calculation (Masked) for Training Data
         num_features = train_actuals_epoch.shape[-1]
-        train_actuals_flat = train_actuals_epoch.reshape(-1, num_features)
-        train_predictions_flat = train_predictions_epoch.reshape(-1, num_features)
+        train_r2_scores_per_feature = []
+        for feat_idx in range(num_features):
+            # Select masked data for the current feature
+            actuals_feat = train_actuals_epoch[:, :, feat_idx][train_masks_epoch[:, :, feat_idx] > 0]
+            preds_feat = train_predictions_epoch[:, :, feat_idx][train_masks_epoch[:, :, feat_idx] > 0]
+            
+            if len(actuals_feat) > 1 and np.var(actuals_feat) > 1e-6 : 
+                train_r2_scores_per_feature.append(r2_score(actuals_feat, preds_feat))
+            elif len(actuals_feat) > 1 and np.allclose(actuals_feat, preds_feat):
+                 train_r2_scores_per_feature.append(1.0)
+            else:
+                train_r2_scores_per_feature.append(0.0) 
         
-        # Handle potential constant actuals for R2 score stability
-        if np.all(np.var(train_actuals_flat, axis=0) < 1e-6): # Check if all features have near-zero variance
-             # If actuals are constant, R2 is 1 if predictions are also constant and equal, 0 otherwise by some conventions for this func
-            avg_train_r2 = r2_score(train_actuals_flat, train_predictions_flat, multioutput='uniform_average') \
-                           if np.allclose(train_actuals_flat, train_predictions_flat) else 0.0
-        else:
-            avg_train_r2 = r2_score(train_actuals_flat, train_predictions_flat, multioutput='uniform_average')
+        avg_train_r2 = np.mean(train_r2_scores_per_feature) if train_r2_scores_per_feature else 0.0
         train_r2s.append(avg_train_r2)
 
-        # Validation phase (similar modifications needed)
+        # --- Validation phase ---
         model.eval()
-        batch_val_loss = 0
-        batch_val_mae = 0
+        batch_val_loss_sum = 0
+        batch_val_mae_sum = 0
+        total_val_elements = 0
+        
         epoch_val_actuals_list = []
         epoch_val_predictions_list = []
+        epoch_val_masks_list = [] # Initialize list for validation masks
 
         with torch.no_grad():
-            for inputs, targets in val_loader:
-                inputs, targets = inputs.to(device), targets.to(device)
-                outputs = model(inputs)
+            for inputs, targets, input_masks_from_loader in val_loader:
+                inputs = inputs.to(device)
+                targets = targets.to(device)
+                input_masks_dev = input_masks_from_loader.to(device)
                 
-                # --- MODIFIED LOSS CALCULATION ---
-                loss = criterion(outputs, targets)
-                batch_val_loss += loss.item()
+                outputs = model(inputs, input_mask=input_masks_dev)
                 
-                # --- MODIFIED MAE CALCULATION ---
-                mae = torch.mean(torch.abs(outputs - targets)).detach().cpu().numpy()
-                batch_val_mae += mae
+                raw_loss = criterion(outputs, targets)
+                target_mask_for_loss = input_masks_dev.unsqueeze(-1).expand_as(targets)
+                masked_loss_elements = raw_loss * target_mask_for_loss
                 
-                epoch_val_actuals_list.append(targets.cpu().numpy())
-                epoch_val_predictions_list.append(outputs.detach().cpu().numpy())        
+                batch_val_loss_sum += masked_loss_elements.sum().item()
+                
+                abs_error = torch.abs(outputs - targets)
+                masked_abs_error_elements = abs_error * target_mask_for_loss
+                batch_val_mae_sum += masked_abs_error_elements.sum().item()
+                
+                total_val_elements += target_mask_for_loss.sum().item()
 
-        avg_val_loss = batch_val_loss / len(val_loader)
-        avg_val_mae = batch_val_mae / len(val_loader)
+                epoch_val_actuals_list.append(targets.cpu().numpy())
+                epoch_val_predictions_list.append(outputs.cpu().numpy())
+                epoch_val_masks_list.append(target_mask_for_loss.cpu().numpy())      
+
+        avg_val_loss = batch_val_loss_sum / total_val_elements if total_val_elements > 0 else 0
+        avg_val_mae = batch_val_mae_sum / total_val_elements if total_val_elements > 0 else 0
         val_losses.append(avg_val_loss)
         val_maes.append(avg_val_mae)
 
         val_actuals_epoch = np.concatenate(epoch_val_actuals_list, axis=0)
         val_predictions_epoch = np.concatenate(epoch_val_predictions_list, axis=0)
+        val_masks_epoch = np.concatenate(epoch_val_masks_list, axis=0)
 
-        # --- MODIFIED R2 CALCULATION (flattening time steps) ---
-        val_actuals_flat = val_actuals_epoch.reshape(-1, num_features)
-        val_predictions_flat = val_predictions_epoch.reshape(-1, num_features)
+        # R2 Calculation (Masked) for Validation Data
+        # num_features is already defined from training actuals, assuming it's consistent
+        val_r2_scores_per_feature = []
+        for feat_idx in range(num_features):
+            actuals_feat = val_actuals_epoch[:, :, feat_idx][val_masks_epoch[:, :, feat_idx] > 0]
+            preds_feat = val_predictions_epoch[:, :, feat_idx][val_masks_epoch[:, :, feat_idx] > 0]
 
-        if np.all(np.var(val_actuals_flat, axis=0) < 1e-6):
-            avg_val_r2 = r2_score(val_actuals_flat, val_predictions_flat, multioutput='uniform_average') \
-                         if np.allclose(val_actuals_flat, val_predictions_flat) else 0.0
-        else:
-            avg_val_r2 = r2_score(val_actuals_flat, val_predictions_flat, multioutput='uniform_average')
-        val_r2s.append(avg_val_r2)
+            if len(actuals_feat) > 1 and np.var(actuals_feat) > 1e-6:
+                val_r2_scores_per_feature.append(r2_score(actuals_feat, preds_feat))
+            elif len(actuals_feat) > 1 and np.allclose(actuals_feat, preds_feat):
+                val_r2_scores_per_feature.append(1.0)
+            else:
+                val_r2_scores_per_feature.append(0.0)
+        avg_val_r2 = np.mean(val_r2_scores_per_feature) if val_r2_scores_per_feature else 0.0
+        # val_r2s.append(avg_val_r2) # Appending to val_r2s was duplicated. Corrected below.
+
+        # The R2 calculation block you had at the end for validation was redundant
+        # if the per-feature masked R2 is already calculated above.
+        # The avg_val_r2 calculated from per-feature masked scores is the one to use.
+        val_r2s.append(avg_val_r2) # Append the correct average R2 for validation
 
         print(f'Epoch [{epoch + 1}/{num_epochs}], Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}, Train MAE: {avg_train_mae:.4f}, Val MAE: {avg_val_mae:.4f}, Train R2: {avg_train_r2:.4f}, Val R2: {avg_val_r2:.4f}')
 
@@ -123,7 +188,7 @@ def validate_model(model, data_loader, device):
     predictions_list = [] # Use a list to collect batch outputs
     actuals_list = []     # Use a list to collect batch targets
     with torch.no_grad():
-        for inputs, targets in data_loader:
+        for inputs, targets, input_masks in data_loader:
             inputs, targets = inputs.to(device), targets.to(device)
             outputs = model(inputs) # outputs shape: (batch, seq_len, features)
             predictions_list.append(outputs.cpu().numpy())
