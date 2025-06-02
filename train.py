@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.metrics import r2_score
+import copy
 
 def train_and_evaluate(model, train_loader, val_loader, criterion, optimizer, num_epochs, device):
     """
@@ -32,6 +33,10 @@ def train_and_evaluate(model, train_loader, val_loader, criterion, optimizer, nu
     train_losses, val_losses = [], []
     train_maes, val_maes = [], []
     train_r2s, val_r2s = [], []
+    
+    best_val_mae = float('inf')  # Initialize with a very high value
+    best_model_state_dict = None # Will store the state_dict of the best model
+    best_epoch = -1              # Will store the epoch number of the best model
 
     for epoch in range(num_epochs):
         # --- Training phase ---
@@ -152,6 +157,13 @@ def train_and_evaluate(model, train_loader, val_loader, criterion, optimizer, nu
         avg_val_mae = batch_val_mae_sum / total_val_elements if total_val_elements > 0 else 0
         val_losses.append(avg_val_loss)
         val_maes.append(avg_val_mae)
+        
+        # Check if current validation MAE is the best so far
+        if avg_val_mae < best_val_mae:
+            best_val_mae = avg_val_mae
+            best_model_state_dict = copy.deepcopy(model.state_dict()) # Store a copy of the best model's state
+            best_epoch = epoch + 1 # Store the epoch number (1-indexed)
+            print(f"Epoch {best_epoch}: New best validation MAE: {best_val_mae:.4f}")
 
         val_actuals_epoch = np.concatenate(epoch_val_actuals_list, axis=0)
         val_predictions_epoch = np.concatenate(epoch_val_predictions_list, axis=0)
@@ -160,10 +172,12 @@ def train_and_evaluate(model, train_loader, val_loader, criterion, optimizer, nu
         # R2 Calculation (Masked) for Validation Data
         # num_features is already defined from training actuals, assuming it's consistent
         val_r2_scores_per_feature = []
-        for feat_idx in range(num_features):
+        for feat_idx in range(num_features): 
+            if feat_idx >= val_actuals_epoch.shape[-1] or feat_idx >= val_masks_epoch.shape[-1] or feat_idx >= val_predictions_epoch.shape[-1]:
+                val_r2_scores_per_feature.append(0.0) 
+                continue
             actuals_feat = val_actuals_epoch[:, :, feat_idx][val_masks_epoch[:, :, feat_idx] > 0]
             preds_feat = val_predictions_epoch[:, :, feat_idx][val_masks_epoch[:, :, feat_idx] > 0]
-
             if len(actuals_feat) > 1 and np.var(actuals_feat) > 1e-6:
                 val_r2_scores_per_feature.append(r2_score(actuals_feat, preds_feat))
             elif len(actuals_feat) > 1 and np.allclose(actuals_feat, preds_feat):
@@ -171,14 +185,14 @@ def train_and_evaluate(model, train_loader, val_loader, criterion, optimizer, nu
             else:
                 val_r2_scores_per_feature.append(0.0)
         avg_val_r2 = np.mean(val_r2_scores_per_feature) if val_r2_scores_per_feature else 0.0
-        # val_r2s.append(avg_val_r2) # Appending to val_r2s was duplicated. Corrected below.
-
-        # The R2 calculation block you had at the end for validation was redundant
-        # if the per-feature masked R2 is already calculated above.
-        # The avg_val_r2 calculated from per-feature masked scores is the one to use.
-        val_r2s.append(avg_val_r2) # Append the correct average R2 for validation
+        val_r2s.append(avg_val_r2)
 
         print(f'Epoch [{epoch + 1}/{num_epochs}], Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}, Train MAE: {avg_train_mae:.4f}, Val MAE: {avg_val_mae:.4f}, Train R2: {avg_train_r2:.4f}, Val R2: {avg_val_r2:.4f}')
+    
+    if best_model_state_dict is None: # Handle case where no improvement was made or num_epochs was 0
+        print("Warning: No best model state was saved (e.g., num_epochs=0 or no validation improvement). Returning last model state.")
+        best_model_state_dict = copy.deepcopy(model.state_dict())
+        best_epoch = num_epochs if num_epochs > 0 else 0
 
     return train_losses, val_losses, train_maes, val_maes, train_r2s, val_r2s
 

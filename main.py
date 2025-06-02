@@ -53,8 +53,8 @@ DATA_FILE_PATH = r'G:\Shared drives\Digital Twin Model\Pilot Test dataset\ToDavi
 #Select data columns (adjust as needed)
 data_columns_to_use = None  # If you want to use all data columns, set data_columns_to_use = None
 #data_columns_to_use = ['pelvis_tx','pelvis_ty','pelvis_tz']  # Example
-#data_columns_to_use = [2]  # Example
-#data_columns_to_use =list(range(6))
+#data_columns_to_use = [1]  # Example
+data_columns_to_use =list(range(6))
 
 # --- Main Execution ---
 if __name__ == '__main__':
@@ -212,7 +212,7 @@ if __name__ == '__main__':
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     
-    num_epochs = 150
+    num_epochs = 200
     train_losses, val_losses, train_maes, val_maes, train_r2s, val_r2s = train_and_evaluate(
         model, train_loader, val_loader, criterion, optimizer, num_epochs, device)
     plot_results(train_losses, val_losses, train_maes, val_maes, train_r2s, val_r2s)
