@@ -382,10 +382,11 @@ def prepare_data_for_modeling(processed_trc_data, processed_data, data_columns_t
 def load_metadata(metadata_filepath, subject_id_col, weight_col, height_col):
     """Loads metadata and prepares it for easy lookup."""
     try:
-        metadata_df = pd.read_csv(metadata_filepath)
+        # Change this line: Use pd.read_excel instead of pd.read_csv
+        # Specify the sheet_name, which you identified as 'Experiment Design'
+        metadata_df = pd.read_excel(metadata_filepath, sheet_name='Experiment Design')
+        
         # Set subject ID as index for quick lookup
-        # You might need to clean/preprocess your subject_id_col if it's not directly usable
-        # e.g., if it's "subj00" in metadata and your file processing gives "00"
         metadata_df[subject_id_col] = metadata_df[subject_id_col].astype(str).str.lower().str.replace(r'[^0-9a-z]', '', regex=True)
         metadata_df = metadata_df.set_index(subject_id_col)
         return metadata_df[[weight_col, height_col]]
@@ -394,6 +395,9 @@ def load_metadata(metadata_filepath, subject_id_col, weight_col, height_col):
         return None
     except KeyError as e:
         print(f"Error: Column {e} not found in metadata file. Needed: {subject_id_col}, {weight_col}, {height_col}")
+        return None
+    except Exception as e: # Catch other potential errors from reading Excel
+        print(f"Error reading Excel metadata file or sheet: {e}")
         return None
 
 def extract_subject_id_from_filepath(filepath, prefix, suffix):

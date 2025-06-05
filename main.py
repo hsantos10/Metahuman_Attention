@@ -18,18 +18,16 @@ import glob
 import torch
 import torch.nn as nn
 import torch.optim as optim
-
-# FROM PYTORCH LITE: from torch.utils.mobile_optimizer import optimize_for_mobile
-# # +++ START EXECUTORCH IMPORTS +++
-# from torch.export import export, ExportedProgram
-# from executorch.exir import EdgeProgramManager, to_edge
-# from executorch.sdk.etdump import GeneratableEtDump, ETDumpGen # For ETDump, if needed
-# from executorch.sdk.etrecord import ETRecord # For ETRecord, if needed
-# # +++ END EXECUTORCH IMPORTS +++
+import sys
 
 from data_loading import (
-    read_trc_file, process_trc_files, process_data_files, read_data_file,
-    prepare_data_for_modeling, prepare_data_for_modeling_with_metadata # import the metadata  if used
+    read_trc_file,
+    process_trc_files,
+    process_data_files,
+    read_data_file,
+    prepare_data_for_modeling,
+    prepare_data_for_modeling_with_metadata,
+    load_metadata # Add this line to import the function
 )
 from eda import calculate_correlation_matrix, calculate_cross_correlation
 from model import LSTM_Network, LSTM_Network_with_Attention
@@ -44,8 +42,10 @@ import os
 
 
 # --- File Paths ---
-#METADATA_FILE_PATH = r'G:\Shared drives\Digital Twin Model\Pilot Test dataset\Subject_info_DAVID.csv' # Update with  actual path
+METADATA_FILE_PATH = r'G:\Shared drives\Digital Twin Model\Pilot Test dataset\ToDavid\Experiment Detail.xlsx'
 TRC_FILE_PATH = r'G:\Shared drives\Digital Twin Model\Pilot Test dataset\ToDavid\MarkerData\*.trc'
+
+# --- Target File Paths ---
 #DATA_FILE_PATH = r'G:\Shared drives\Digital Twin Model\Pilot Test dataset\ToDavid\IK_Results\*.mot'  # Kinematics
 #DATA_FILE_PATH = r'G:\Shared drives\Digital Twin Model\Pilot Test dataset\ToDavid\ID_Results\*.sto'  # Dynamics
 DATA_FILE_PATH = r'G:\Shared drives\Digital Twin Model\Pilot Test dataset\ToDavid\ForcesData\*.mot'  # Ground Forces
@@ -53,8 +53,12 @@ DATA_FILE_PATH = r'G:\Shared drives\Digital Twin Model\Pilot Test dataset\ToDavi
 #Select data columns (adjust as needed)
 data_columns_to_use = None  # If you want to use all data columns, set data_columns_to_use = None
 #data_columns_to_use = ['pelvis_tx','pelvis_ty','pelvis_tz']  # Example
-#data_columns_to_use = [1]  # Example
-data_columns_to_use =list(range(6))
+data_columns_to_use = [3,10]  # Example
+#data_columns_to_use =list(range(6))
+#\
+    
+    
+data_columns_to_use = ['ground_force_1_vy', 'ground_force_2_vy']
 
 # --- Main Execution ---
 if __name__ == '__main__':
@@ -67,7 +71,7 @@ if __name__ == '__main__':
     # Process TRC files to ensure consistency AND remove markers
     markers_to_remove = [
        'Box1', 'Box2', 'Box3', 'Box4', 'DL1', 'DL2', 'DL3', 'DH1', 'DH2', 'DH3', 'T1', 'T2',
-       #'LELBL', 'LWRL', 'RELBL', 'RWRL', 'LASI', 'LPSI', 'RPSI', 'RASI', 'MChest', 'SENL', 'SENR', 'LANKM', 'RANKL'
+       'LELBL', 'LWRL', 'RELBL', 'RWRL', 'LASI', 'LPSI', 'RPSI', 'RASI', 'MChest', 'SENL', 'SENR', 'LANKM', 'RANKL'
         'Left Elbow Lateral Epicondyle',
         'Left Wrist Radial Styloid',
         'Right Elbow Lateral Epicondyle',
@@ -84,49 +88,47 @@ if __name__ == '__main__':
    ]  # Define markers to remove
     
     # 2. Prepare Data for Modeling --- CHOOSE WHICH DATA PREPARATION TO USE --- 
-    USE_METADATA_LOADING = False # Set to False to use the older prepare_data_for_modeling
+    USE_METADATA_LOADING = True # Set to False to use the older prepare_data_for_modeling
 
     if USE_METADATA_LOADING:
         print("Using data preparation with metadata.")
-        metadata_df = load_metadata(METADATA_FILE_PATH, subject_id_col='Subject', weight_col='Weight', height_col='Height')
+        # Ensure 'Subject', 'Weight(kg)', 'Height(m)' match the exact column names in your CSV
+        metadata_df = load_metadata(METADATA_FILE_PATH, subject_id_col='Subject', weight_col='Weight(kg)', height_col='Height(m)')
         if metadata_df is None:
             print("Failed to load metadata. Exiting.")
-            exit()
-       
-        # Define prefixes and suffixes for subject ID extraction -  ADAPT THESE CAREFULLY
-        # Example: if TRC files are "Experiment Detail.xlsx - subj00.trc"
-        # and metadata 'Subject' column has "subj00" or "00"
-        # And data files are "subj00_forces.mot"
-        trc_file_prefix = "Experiment Detail.xlsx - subj" # Adjust if only "subj" or if it varies
+            sys.exit()
+
+        # Define prefixes and suffixes for subject ID extraction from file names
+        # Adjust these based on your actual file naming conventions.
+        # Example: if TRC files are "G:\...\MarkerData\Experiment Detail.xlsx - subj00.trc"
+        trc_file_prefix = "Experiment Detail.xlsx - subj"
         trc_file_suffix = ".trc"
-        data_file_prefix = "subject_trial_forces_" # Or "subj" or "" depending on data_files names
+        # Example: if data files are "G:\...\ForcesData\subject_trial_forces_00.mot"
+        data_file_prefix = "subject_trial_forces_" # YOU MAY NEED TO ADJUST THIS BASED ON YOUR MOT/STO FILE NAMES
         _, first_data_file_ext = os.path.splitext(data_files[0])
         data_file_suffix = first_data_file_ext # e.g. ".mot" or ".sto"
-       
-        #data_columns_to_use = list(range(6)) # Example: use first 6 columns from data files as targets
-       
+
         (train_data_tuple, val_data_tuple, test_data_tuple,
          max_length, input_size, output_size) = prepare_data_for_modeling_with_metadata(
             trc_files, data_files, metadata_df, data_columns_to_use,
             trc_file_prefix=trc_file_prefix, trc_file_suffix=trc_file_suffix,
             data_file_prefix=data_file_prefix, data_file_suffix=data_file_suffix,
-            subject_id_col_in_metadata='Subject', # Ensure this matches your CSV
-            weight_col_in_metadata='Weight',   # Ensure this matches your CSV
-            height_col_in_metadata='Height', # Ensure this matches your CSV
+            subject_id_col_in_metadata='Subject', # Matches the column in your CSV
+            weight_col_in_metadata='Weight(kg)',   # Matches the column in your CSV
+            height_col_in_metadata='Height(m)', # Matches the column in your CSV
             test_size=0.1, val_size=0.1, random_state=42
         )
-        # train_data_tuple is (train_trc_seqs, train_data_seqs, train_input_masks)
        
     else:
         print("Using data preparation WITHOUT metadata (original flow).")
         processed_trc_data = process_trc_files(trc_files, markers_to_remove)
         if not processed_trc_data:
             print("Error processing TRC files. Exiting.")
-            exit()
+            sys.exit()
         processed_data = process_data_files(data_files) # These are targets
         if not processed_data:
             print("Error processing data files (targets). Exiting.")
-            exit()
+            sys.exit()
         
         #data_columns_to_use = list(range(6)) # Example: use first 6 columns from data files as targets
        
@@ -146,7 +148,7 @@ if __name__ == '__main__':
     processed_data = process_data_files(data_files)
     if not processed_data:
         print("Error processing data files. Exiting.")
-        exit()
+        sys.exit()
 
     # Load a single TRC and data file for EDA (using the first file for simplicity)
     trc_data_for_eda = processed_trc_data[0].copy()  # Use processed data!
@@ -212,7 +214,7 @@ if __name__ == '__main__':
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     
-    num_epochs = 200
+    num_epochs = 125
     train_losses, val_losses, train_maes, val_maes, train_r2s, val_r2s = train_and_evaluate(
         model, train_loader, val_loader, criterion, optimizer, num_epochs, device)
     plot_results(train_losses, val_losses, train_maes, val_maes, train_r2s, val_r2s)
