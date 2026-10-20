@@ -1,0 +1,10 @@
+{
+  "learning_rate": 0.00029557044630043096,
+  "batch_size": 16,
+  "dropout": 0.052147795860242235,
+  "d_model": 256,
+  "num_encoder_layers": 6,
+  "dim_feedforward": 1024,
+  "num_cnn_filters": 256,
+  "nhead": 8
+}

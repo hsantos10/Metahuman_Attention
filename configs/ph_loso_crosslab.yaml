@@ -1,0 +1,88 @@
+# Patient Handling LOSO with GroundLink cross-lab evaluation
+# Used with: python chapter1/pipeline/main.py --config configs/ph_loso_crosslab.yaml
+#
+# Trains on Patient Handling subjects with LOSO cross-validation.
+# Each fold holds out one PH subject and evaluates on GL subject 2 (gl_2)
+# for cross-lab generalisation assessment.
+
+dataset:
+  name: PATIENT_HANDLING
+  root: "${TAMU_DATA_ROOT}/01.PatientHandlingTasks/03.OpenSim"
+  metadata: "${TAMU_DATA_ROOT}/01.PatientHandlingTasks/Experiment Detail.xlsx"
+  # Exclude subjects with swapped force plate assignments (plate 1/2 reversed)
+  excluded_subjects:
+    - subj13
+    - subj14
+
+model:
+  architectures: ImprovedConvFormer
+
+markers:
+  # 20-marker COMBINED set (intersection of GL ∩ PH)
+  essential:
+    - LSHO
+    - RSHO
+    - LELBL
+    - LELBM
+    - LWRL
+    - LWRM
+    - RELBL
+    - RELBM
+    - RWRM
+    - LKNE
+    - RKNE
+    - LTOE
+    - LHEE
+    - LANKL
+    - RTOE
+    - RHEE
+    - RANKM
+    - LASI
+    - LANKM
+    - RANKL
+
+targets:
+  columns:
+    - ground_force_1_ml
+    - ground_force_1_vert
+    - ground_force_1_ap
+    - ground_force_1_px
+    - ground_force_1_pz
+    - ground_force_2_ml
+    - ground_force_2_vert
+    - ground_force_2_ap
+    - ground_force_2_px
+    - ground_force_2_pz
+  force_mode: nbw
+  normalization: standard
+
+processing:
+  max_length: 1750
+  strict_target_columns: false
+  biomech_preprocessing: true
+  bilateral_flip: true
+  coordinate_corrections: true
+  marker_units: mm
+  nan_threshold: 0.10
+  data_diagnostics: false
+
+cross_lab:
+  use_loso: true
+  # GL subject 2 for cross-lab evaluation
+  cross_lab_subject: gl_2
+
+training:
+  final_epochs: 300
+
+early_stopping:
+  patience: 35
+  min_delta: 0.0
+
+hpo:
+  num_trials: 20
+  epochs_per_trial: 25
+
+sanity:
+  epochs: 30
+  loss_abort_threshold: 10.0
+  abort_epoch_window: 2

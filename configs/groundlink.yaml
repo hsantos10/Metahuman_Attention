@@ -1,0 +1,75 @@
+# GroundLink dataset configuration
+# Used with: python chapter1/pipeline/main.py --config configs/groundlink.yaml
+
+dataset:
+  name: GROUNDLINK
+  # Root path to the GroundLink dataset (C3D + force .npy files)
+  root: "${GROUNDLINK_ROOT}"
+  # Subjects excluded from training/evaluation due to data quality issues.
+  # s001 (gl_1): systemic force anomalies — ML bias, AP sign flips, CoP offset.
+  excluded_subjects:
+    - s001
+  # Metadata CSV with subject demographics (Mass, Height)
+  metadata: "data/groundlink_metadata.csv"
+
+markers:
+  # 20-marker COMBINED set (intersection of GL ∩ PH)
+  # Note: the code hardcodes ESSENTIAL_MARKER_SHORT_NAMES_COMBINED;
+  # this list is for documentation purposes.
+  essential:
+    - LSHO
+    - RSHO
+    - LELBL
+    - LELBM
+    - LWRL
+    - LWRM
+    - RELBL
+    - RELBM
+    - RWRM
+    - LKNE
+    - RKNE
+    - LTOE
+    - LHEE
+    - LANKL
+    - RTOE
+    - RHEE
+    - RANKM
+    - LASI
+    - LANKM
+    - RANKL
+
+targets:
+  # 10 GRF output columns (2 force plates × 5 channels)
+  columns:
+    - ground_force_1_ml
+    - ground_force_1_vert
+    - ground_force_1_ap
+    - ground_force_1_px
+    - ground_force_1_pz
+    - ground_force_2_ml
+    - ground_force_2_vert
+    - ground_force_2_ap
+    - ground_force_2_px
+    - ground_force_2_pz
+  # Force units: "newton" (raw Newtons) or "nbw" (normalized body weight)
+  force_mode: nbw
+  # Target normalization: "standard" (z-score per fold)
+  normalization: standard
+
+processing:
+  # Maximum sequence length (frames); 0 = auto-detect from data
+  max_length: 1750
+  # Strict target column matching
+  strict_target_columns: true
+  # Biomechanical preprocessing (root subtraction, heading alignment, height scaling)
+  biomech_preprocessing: true
+  # Bilateral flip augmentation (L↔R mirror for training)
+  bilateral_flip: true
+  # Coordinate corrections for non-GroundLink data
+  coordinate_corrections: false
+  # Marker coordinate units
+  marker_units: mm
+  # NaN threshold for trial exclusion (fraction of missing data)
+  nan_threshold: 0.10
+  # Enable detailed data loading diagnostics
+  data_diagnostics: false

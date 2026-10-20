@@ -1,0 +1,11 @@
+{
+  "d_model": 64,
+  "nhead": 8,
+  "num_encoder_layers": 2,
+  "dim_feedforward": 512,
+  "dropout": 0.137,
+  "num_cnn_filters": 256,
+  "learning_rate": 0.00046,
+  "weight_decay": 0.000736,
+  "batch_size": 16
+}

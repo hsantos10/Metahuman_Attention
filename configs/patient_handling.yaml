@@ -1,0 +1,65 @@
+# Patient Handling (OpenSim) dataset configuration
+# Used with: python chapter1/pipeline/main.py --config configs/patient_handling.yaml
+
+dataset:
+  name: PATIENT_HANDLING
+  # Root path to the OpenSim patient handling data
+  root: "${TAMU_DATA_ROOT}/01.PatientHandlingTasks/03.OpenSim"
+  # Metadata Excel with subject demographics
+  metadata: "${TAMU_DATA_ROOT}/01.PatientHandlingTasks/Experiment Detail.xlsx"
+  # Exclude subjects with swapped force plate assignments (plate 1/2 reversed)
+  excluded_subjects:
+    - subj13
+    - subj14
+
+markers:
+  # 20-marker COMBINED set (intersection of GL ∩ PH)
+  # Note: the code hardcodes ESSENTIAL_MARKER_SHORT_NAMES_COMBINED;
+  # this list is for documentation purposes.
+  essential:
+    - LSHO
+    - RSHO
+    - LELBL
+    - LELBM
+    - LWRL
+    - LWRM
+    - RELBL
+    - RELBM
+    - RWRM
+    - LKNE
+    - RKNE
+    - LTOE
+    - LHEE
+    - LANKL
+    - RTOE
+    - RHEE
+    - RANKM
+    - LASI
+    - LANKM
+    - RANKL
+
+targets:
+  columns:
+    - ground_force_1_ml
+    - ground_force_1_vert
+    - ground_force_1_ap
+    - ground_force_1_px
+    - ground_force_1_pz
+    - ground_force_2_ml
+    - ground_force_2_vert
+    - ground_force_2_ap
+    - ground_force_2_px
+    - ground_force_2_pz
+  force_mode: nbw
+  normalization: standard
+
+processing:
+  max_length: 1750
+  strict_target_columns: false
+  biomech_preprocessing: true
+  bilateral_flip: true
+  # PH uses OpenSim coordinate convention (X=ML, Y=Vert, Z=AP) — corrections applied
+  coordinate_corrections: true
+  marker_units: mm
+  nan_threshold: 0.10
+  data_diagnostics: false

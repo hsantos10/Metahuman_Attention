@@ -1,0 +1,8 @@
+{
+  "learning_rate": 0.001548918035182921,
+  "batch_size": 32,
+  "dropout": 0.21504708691846097,
+  "weight_decay": 0.005881190150995162,
+  "num_filters": 512,
+  "kernel_size": 3
+}

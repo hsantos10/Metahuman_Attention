@@ -1,0 +1,79 @@
+dataset:
+  name: GROUNDLINK
+  # Subjects excluded from training/evaluation due to data quality issues.
+  # gl_1 (s001): systemic force anomalies — ML bias, AP sign flips, CoP offset.
+  excluded_subjects:
+    - s001
+
+model:
+  architectures: ImprovedConvFormer
+
+markers:
+  # 20-marker COMBINED set (intersection of GL ∩ PH)
+  # Note: the code hardcodes ESSENTIAL_MARKER_SHORT_NAMES_COMBINED;
+  # this list is for documentation purposes.
+  essential:
+    - LSHO
+    - RSHO
+    - LELBL
+    - LELBM
+    - LWRL
+    - LWRM
+    - RELBL
+    - RELBM
+    - RWRM
+    - LKNE
+    - RKNE
+    - LTOE
+    - LHEE
+    - LANKL
+    - RTOE
+    - RHEE
+    - RANKM
+    - LASI
+    - LANKM
+    - RANKL
+
+targets:
+  columns:
+    - ground_force_1_ml
+    - ground_force_1_vert
+    - ground_force_1_ap
+    - ground_force_1_px
+    - ground_force_1_pz
+    - ground_force_2_ml
+    - ground_force_2_vert
+    - ground_force_2_ap
+    - ground_force_2_px
+    - ground_force_2_pz
+  force_mode: nbw
+  normalization: standard
+
+processing:
+  max_length: 1750
+  strict_target_columns: false
+  biomech_preprocessing: true
+  bilateral_flip: true
+  coordinate_corrections: true
+  marker_units: mm
+  nan_threshold: 0.10
+
+cross_lab:
+  use_loso: true
+  cross_lab_subject: ph_1
+
+training:
+  final_epochs: 300
+
+early_stopping:
+  patience: 35
+  min_delta: 0.0
+
+hpo:
+  num_trials: 10
+  epochs_per_trial: 25
+
+sanity:
+  epochs: 30
+  loss_abort_threshold: 10.0
+  abort_epoch_window: 2

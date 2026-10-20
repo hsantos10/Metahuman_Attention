@@ -1,0 +1,65 @@
+# Combined (GL + PH) dual-holdout cross-validation
+# Each fold holds out 1 GL subject + 1 PH subject for validation
+# Used with: python chapter1/pipeline/combined_hpo_cv.py --config configs/combined_dual_holdout.yaml
+#
+# Exclusions:
+#   GL: s001 (gl_1) — systemic force anomalies
+#   PH: subj07/subj09/subj11/subj12 — worst LOSO R2, subj13/subj14 — plate swap
+#   Keeps 6 GL (gl_2..gl_7) + 6 PH (ph_1..ph_6) for balanced comparison
+
+dataset:
+  name: COMBINED
+  gl_excluded_subjects:
+    - s001
+  ph_excluded_subjects:
+    - subj07
+    - subj09
+    - subj11
+    - subj12
+    - subj13
+    - subj14
+
+model:
+  architectures: ImprovedConvFormer
+
+targets:
+  columns:
+    - ground_force_1_ml
+    - ground_force_1_vert
+    - ground_force_1_ap
+    - ground_force_1_px
+    - ground_force_1_pz
+    - ground_force_2_ml
+    - ground_force_2_vert
+    - ground_force_2_ap
+    - ground_force_2_px
+    - ground_force_2_pz
+  force_mode: nbw
+  normalization: standard
+
+processing:
+  max_length: 1750
+  strict_target_columns: false
+  biomech_preprocessing: true
+  bilateral_flip: true
+  coordinate_corrections: true
+  nan_threshold: 0.10
+  data_diagnostics: false
+
+hpo:
+  num_trials: 10
+  epochs_per_trial: 25
+
+training:
+  fold_epochs: 200
+  final_epochs: 300
+
+early_stopping:
+  patience: 35
+  min_delta: 0.0
+
+# Dual-holdout CV specific
+dual_holdout:
+  n_folds: 6
+  # GL subjects available after exclusion: gl_2..gl_7 (6 subjects, one per fold)
+  # PH subjects available after exclusion: ph_1..ph_6 (6 subjects, one per fold)

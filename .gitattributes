@@ -1,0 +1,12 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Files run by bash, Slurm or expect (locally in WSL and on FASTER) must keep LF line endings in the working tree
+# too: with core.autocrlf=true, git otherwise writes them with CRLF on Windows checkouts and bash fails
+# ("set: pipefail: invalid option name"). 2026-10-02.
+*.sh     text eol=lf
+*.slurm  text eol=lf
+*.exp    text eol=lf
+*.env    text eol=lf
+.env     text eol=lf
+*.tsv    text eol=lf

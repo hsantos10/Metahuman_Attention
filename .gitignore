@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+# Local / secrets
+.env
+!.env.example
+.vscode/
+.claude/worktrees/
+.claude/settings.local.json
+
+# Data: ignore by default, track the small metadata files explicitly
+/data/*
+!/data/README.md
+!/data/groundlink_metadata.csv
+!/data/wind_turbine_trials.csv
+
+# Run artifacts: frozen paper inputs live here (outputs/, runs/m6_*); large, regenerable
+/outputs/
+/runs/*
+!/runs/README.md
+/wandb/
+/_archive/
+# the 42 files already tracked here stay tracked; new PNG/CSV dumps do not
+/archive/top_results/
+
+# Logs and backups
+*.log
+*.bak
+
+# local cluster settings
+/hprc/hprc.env
